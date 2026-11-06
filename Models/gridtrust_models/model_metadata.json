@@ -1,0 +1,16 @@
+{
+    "project": "GridTrust-GB",
+    "model_name": "GridTrust Two-Hour Demand Forecaster",
+    "version": "1.0",
+    "model_type": "XGBoost Regressor",
+    "target": "Great Britain National Demand (ND)",
+    "forecast_horizon": "2 hours",
+    "data_resolution": "30 minutes",
+    "data_source": "NESO Historic Demand Data",
+    "development_period": "2022-2024",
+    "final_test_period": "2025",
+    "uncertainty_method": "Adaptive error model with conformal calibration",
+    "explainability": "SHAP",
+    "grid_simulation": "Modified IEEE 14-bus test network using pandapower",
+    "important_note": "The IEEE 14-bus network is a synthetic stress-test environment and does not represent the physical GB transmission network."
+}

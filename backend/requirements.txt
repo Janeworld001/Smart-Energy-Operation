@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+numpy
+pandas
+pandapower
+shap
+xgboost==3.1.2
+joblib

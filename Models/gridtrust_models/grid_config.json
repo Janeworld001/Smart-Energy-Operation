@@ -1,0 +1,13 @@
+{
+    "candidate_line": 0,
+    "risk_thresholds": {
+        "normal_below_percent": 80,
+        "constraint_at_percent": 100
+    },
+    "corrective_actions": {
+        "battery": true,
+        "demand_response": true,
+        "redispatch": true
+    },
+    "human_approval_required": true
+}

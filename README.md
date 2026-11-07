@@ -75,6 +75,20 @@ npm run dev
 
 The development API allows browser requests from `localhost:5173` and `127.0.0.1:5173`. If you change the frontend's origin, update the backend CORS configuration in `backend/app/main.py` as well.
 
+## Deploy the frontend to Vercel
+
+The backend can stay on Render at `https://smart-energy-operation.onrender.com`; deploy only the frontend to Vercel. In the Vercel project setup:
+
+1. Import the GitHub repository.
+2. Set the **Root Directory** to `frontend`.
+3. Use the Vite framework preset, with build command `npm run build` and output directory `dist`.
+4. Add the environment variable `VITE_API_URL` with value `https://smart-energy-operation.onrender.com` for the Production environment (and Preview too if you want to test preview deployments).
+5. Deploy the project and copy its production domain, such as `https://your-project.vercel.app`.
+
+Vite embeds `VITE_API_URL` into the frontend during the build, so set it in Vercel before deploying or redeploy after changing it. The local `frontend/.env.production` is ignored by Git and is not a substitute for setting the Vercel environment variable.
+
+The backend permits browser requests from the local Vite origins by default. In the Render backend service settings, set `GRIDTRUST_ALLOWED_ORIGINS` to the exact Vercel production origin, for example `https://your-project.vercel.app` (origin only: no path or trailing slash), then restart or redeploy the backend. The backend accepts multiple comma-separated origins, so you can also add specific Vercel preview or custom-domain origins. Preview domains that change should be added as needed; wildcard origins are not enabled. Once both services are deployed, open the Vercel URL and confirm that analysis, CSV import, and history requests work.
+
 ## Forecast model and artifacts
 
 By default, the backend looks for the model bundle in `Models/gridtrust_models/`:
@@ -124,18 +138,27 @@ The UI requires these values to be present, finite, and non-negative before enab
 
 ### Import a CSV
 
-The dashboard's Grid simulation section accepts a CSV file. The import endpoint expects these column names:
+The dashboard's Grid simulation section accepts either the standard format below or a NESO settlement-period export:
 
 ```csv
 timestamp,demand_mw,wind_mw,solar_mw,pumping_mw
 2025-01-01T00:00:00+00:00,28000,6000,1500,300
 ```
 
-`timestamp` and `demand_mw` are required. The other three columns are optional; if omitted, the dashboard keeps its manually entered values for those current-generation inputs. Column names are trimmed and case-insensitive. If an optional column is included, each non-empty data row must have a valid value for it.
+For the standard format, `timestamp` and `demand_mw` are required. The other three columns are optional; if omitted, the dashboard keeps its manually entered values for those current-generation inputs. Column names are trimmed and case-insensitive. If an optional column is included, each non-empty data row must have a valid value for it.
+
+NESO exports can use these columns directly:
+
+```csv
+SETTLEMENT_DATE,SETTLEMENT_PERIOD,ND,EMBEDDED_WIND_GENERATION,EMBEDDED_SOLAR_GENERATION,PUMP_STORAGE_PUMPING,FORECAST_ACTUAL_INDICATOR
+2026-01-01,1,28000,6000,1500,300,A
+```
+
+`SETTLEMENT_DATE`, `SETTLEMENT_PERIOD`, and `ND` are required. The importer maps `ND` to demand, embedded wind and solar generation to their corresponding optional inputs, and pumped-storage pumping to pumping. If `FORECAST_ACTUAL_INDICATOR` is present, rows must be marked `A` (actual). Settlement periods are converted using Europe/London local settlement days, including 46-period and 50-period daylight-saving days.
 
 Import requirements and behavior:
 
-- At least **337 consecutive readings**, one per half hour, are needed to calculate the seven-day lag.
+- At least **337 consecutive actual readings**, one per half hour, are needed to calculate the seven-day lag.
 - Timestamps must be in strictly increasing order without duplicates or missing half-hour intervals. ISO-8601 timestamps are accepted.
 - Timestamps with an explicit timezone are converted to Europe/London time. Timestamps without a timezone are interpreted as Europe/London local time and flagged in the import warnings.
 - Demand must be greater than zero; other numeric values must be finite and non-negative.
@@ -160,6 +183,7 @@ The backend exposes these endpoints:
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/health` | Basic service health check |
+| `GET` | `/neso-data?limit=10` | Fetch the latest Daily Demand Update rows from the NESO Data Portal |
 | `POST` | `/api/import-data` | Validate CSV text and return a scenario snapshot and import warnings |
 | `POST` | `/api/analyze` | Forecast demand, run the network scenarios, and save the analysis |
 | `POST` | `/api/decisions` | Save an operator decision associated with an analysis |
@@ -167,6 +191,8 @@ The backend exposes these endpoints:
 | `GET` | `/api/decisions` | Return the 50 most recent decisions |
 
 Request and response schemas are available at `/docs` while the backend is running. For CSV import, send JSON with `csv_text` and `file_name`. For analysis, send a snapshot containing the current readings, history, timestamp/source information where available, and optional `synthetic_stress_pct`. Decisions use a status of `approved`, `modified`, or `rejected`; an action can be `battery`, `demand_response`, `redispatch`, or `null`.
+
+The `/neso-data` endpoint requests the newest rows from NESO's **Daily Demand Update** dataset. Use the optional `limit` query parameter to request between 1 and 100 records; the default is 10. Open `/docs`, expand `GET /neso-data`, and select **Try it out** to inspect the live response. This endpoint only returns the source records and is not connected to forecasting or grid simulation. NESO's dataset includes both actual and forecast periods; check `FORECAST_ACTUAL_INDICATOR` before interpreting a record.
 
 ## Local storage and configuration
 

@@ -4,7 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -41,6 +41,47 @@ class GridTrustWorkflowTests(unittest.TestCase):
             writer.writerow([timestamp.isoformat(), 28000 + index, 6000, 1500, 300])
         return output.getvalue()
 
+    @staticmethod
+    def make_neso_csv(row_count=337):
+        london = ZoneInfo("Europe/London")
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow([
+            "SETTLEMENT_DATE",
+            "SETTLEMENT_PERIOD",
+            "ND",
+            "EMBEDDED_WIND_GENERATION",
+            "EMBEDDED_SOLAR_GENERATION",
+            "PUMP_STORAGE_PUMPING",
+            "FORECAST_ACTUAL_INDICATOR",
+        ])
+        rows_written = 0
+        settlement_date = datetime(2026, 3, 26).date()
+        while rows_written < row_count:
+            day_start = datetime.combine(settlement_date, datetime.min.time(), london)
+            next_day_start = datetime.combine(
+                settlement_date + timedelta(days=1), datetime.min.time(), london
+            )
+            period_count = int(
+                (next_day_start.astimezone(timezone.utc) - day_start.astimezone(timezone.utc))
+                / timedelta(minutes=30)
+            )
+            for settlement_period in range(1, period_count + 1):
+                writer.writerow([
+                    settlement_date.isoformat(),
+                    settlement_period,
+                    28000 + rows_written,
+                    6000,
+                    1500,
+                    300,
+                    "A",
+                ])
+                rows_written += 1
+                if rows_written == row_count:
+                    break
+            settlement_date += timedelta(days=1)
+        return output.getvalue()
+
     def test_csv_import_builds_lags_and_rolling_features(self):
         result = main.import_demand_csv(self.make_csv(), "historical.csv")
         snapshot = result["snapshot"]
@@ -50,6 +91,20 @@ class GridTrustWorkflowTests(unittest.TestCase):
         self.assertEqual(snapshot["history"]["lag_336"], 28000)
         self.assertAlmostEqual(snapshot["history"]["rolling_mean_48"], 28311.5)
         self.assertEqual(snapshot["source_fields"], ["demand_mw", "wind_mw", "solar_mw", "pumping_mw"])
+        self.assertFalse(snapshot["history_is_example"])
+
+    def test_neso_csv_import_handles_spring_dst_settlement_periods(self):
+        result = main.import_demand_csv(self.make_neso_csv(), "neso.csv")
+        snapshot = result["snapshot"]
+
+        self.assertEqual(result["rows_imported"], 337)
+        self.assertEqual(
+            snapshot["source_fields"],
+            ["demand_mw", "wind_mw", "solar_mw", "pumping_mw"],
+        )
+        self.assertEqual(snapshot["history"]["lag_1"], 28335)
+        self.assertEqual(snapshot["history"]["lag_336"], 28000)
+        self.assertEqual(snapshot["observed_at"], "2026-04-02T01:00:00+01:00")
         self.assertFalse(snapshot["history_is_example"])
 
     def test_csv_import_rejects_missing_intervals_and_short_history(self):

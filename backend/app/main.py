@@ -17,9 +17,11 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+from app.neso_client import NesoApiError, fetch_latest_records
 
 DEFAULT_GRID_CONFIG = {
     "candidate_line": 0,
@@ -29,9 +31,18 @@ DEFAULT_GRID_CONFIG = {
 }
 
 app = FastAPI(title="GridTrust API", version="1.0.0")
+allowed_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+allowed_origins.extend(
+    origin.strip().rstrip("/")
+    for origin in os.getenv("GRIDTRUST_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -401,38 +412,85 @@ def import_demand_csv(csv_text: str, file_name: str) -> dict:
     ]
     if len(set(normalized_headers)) != len(normalized_headers):
         raise ValueError("CSV contains duplicate or blank column names.")
-    required_headers = {"timestamp", "demand_mw"}
-    missing_headers = required_headers - set(normalized_headers)
+    headers = set(normalized_headers)
+    settlement_format = {"settlement_date", "settlement_period", "nd"}.issubset(headers)
+    if settlement_format:
+        source_columns = {
+            "demand_mw": "nd",
+            "wind_mw": "embedded_wind_generation",
+            "solar_mw": "embedded_solar_generation",
+            "pumping_mw": "pump_storage_pumping",
+        }
+        required_headers = {"settlement_date", "settlement_period", "nd"}
+        available_source_columns = {"demand_mw"} | {
+            output for output, source in source_columns.items() if source in headers
+        }
+    else:
+        source_columns = {
+            column: column
+            for column in ("demand_mw", "wind_mw", "solar_mw", "pumping_mw")
+        }
+        required_headers = {"timestamp", "demand_mw"}
+        available_source_columns = headers
+    missing_headers = required_headers - headers
     if missing_headers:
         raise ValueError(
-            "CSV must include these columns: timestamp, demand_mw. "
+            "CSV must include timestamp and demand_mw, or NESO settlement_date, "
+            "settlement_period, and ND columns. "
             f"Missing: {', '.join(sorted(missing_headers))}."
         )
 
     records: list[dict] = []
     naive_timestamp_seen = False
     header_lookup = dict(zip(normalized_headers, original_headers, strict=True))
+    actual_indicator_column = "forecast_actual_indicator"
     for line_number, row in enumerate(reader, start=2):
         if not any((value or "").strip() for value in row.values() if isinstance(value, str)):
             continue
         if None in row:
             raise ValueError(f"Row {line_number} has more values than the header.")
         values = {key: row.get(original) for key, original in header_lookup.items()}
-        if any(values.get(key) is None or not values[key].strip() for key in required_headers):
-            raise ValueError(f"Row {line_number} is missing a timestamp or demand value.")
-        raw_timestamp = values["timestamp"].strip()
-        try:
-            parsed_raw = datetime.fromisoformat(raw_timestamp.replace("Z", "+00:00"))
-            naive_timestamp_seen = naive_timestamp_seen or parsed_raw.tzinfo is None
-            timestamp = parse_csv_timestamp(raw_timestamp)
-        except ValueError as exc:
-            raise ValueError(f"Row {line_number}: {exc}") from exc
+        if settlement_format:
+            if any(values.get(key) is None or not values[key].strip() for key in required_headers):
+                raise ValueError(f"Row {line_number} is missing a settlement date, period, or ND value.")
+            if (
+                actual_indicator_column in values
+                and values[actual_indicator_column].strip().upper() != "A"
+            ):
+                raise ValueError(
+                    f"Row {line_number} is not marked as actual data (A). "
+                    "Upload historical rows whose FORECAST_ACTUAL_INDICATOR is A."
+                )
+            try:
+                settlement_day = datetime.strptime(
+                    values["settlement_date"].strip(), "%Y-%m-%d"
+                ).replace(tzinfo=UK_TIME)
+                settlement_period = int(values["settlement_period"])
+            except ValueError as exc:
+                raise ValueError(f"Row {line_number} has an invalid settlement date or period.") from exc
+            if not 1 <= settlement_period <= 50:
+                raise ValueError(f"Row {line_number} has a settlement period outside the valid range 1–50.")
+            timestamp = (
+                settlement_day.astimezone(timezone.utc)
+                + timedelta(minutes=30 * (settlement_period - 1))
+            ).astimezone(UK_TIME)
+        else:
+            if any(values.get(key) is None or not values[key].strip() for key in required_headers):
+                raise ValueError(f"Row {line_number} is missing a timestamp or demand value.")
+            raw_timestamp = values["timestamp"].strip()
+            try:
+                parsed_raw = datetime.fromisoformat(raw_timestamp.replace("Z", "+00:00"))
+                naive_timestamp_seen = naive_timestamp_seen or parsed_raw.tzinfo is None
+                timestamp = parse_csv_timestamp(raw_timestamp)
+            except ValueError as exc:
+                raise ValueError(f"Row {line_number}: {exc}") from exc
 
         record = {"timestamp": timestamp}
         for column in ("demand_mw", "wind_mw", "solar_mw", "pumping_mw"):
-            raw_value = values.get(column)
-            if column not in required_headers and column not in header_lookup:
+            source_column = source_columns.get(column)
+            if column not in available_source_columns or source_column is None:
                 continue
+            raw_value = values.get(source_column)
             if raw_value is None or not raw_value.strip():
                 raise ValueError(f"Row {line_number} is missing a value in {column}.")
             try:
@@ -471,7 +529,10 @@ def import_demand_csv(csv_text: str, file_name: str) -> dict:
         "rolling_std_48": statistics.stdev(rolling_window),
     }
     latest = records[-1]
-    available_fields = [field for field in ("demand_mw", "wind_mw", "solar_mw", "pumping_mw") if field in header_lookup]
+    available_fields = [
+        field for field in ("demand_mw", "wind_mw", "solar_mw", "pumping_mw")
+        if field in available_source_columns
+    ]
     source_name = file_name.replace("\\", "/").rsplit("/", 1)[-1][:120] or "uploaded.csv"
     snapshot = GridSnapshot(
         demand_mw=latest["demand_mw"],
@@ -602,6 +663,15 @@ def health_check() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/neso-data")
+def get_neso_data(limit: int = Query(10, ge=1, le=100)) -> dict:
+    """Return the newest rows from NESO's Daily Demand Update dataset."""
+    try:
+        return fetch_latest_records(limit)
+    except NesoApiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @app.post("/api/import-data")
 def import_data(request: CSVImportRequest) -> dict:
     try:
@@ -661,10 +731,7 @@ def analyze(snapshot: GridSnapshot) -> dict:
         }
     result = {
         "network": "IEEE 14-bus synthetic test network",
-        "network_notice": (
-            "Synthetic test network only — not the real UK grid. IEEE-14 demand is scaled by the forecast/current-demand ratio"
-            + (f" and an additional {snapshot.synthetic_stress_pct}% demonstration stress." if snapshot.synthetic_stress_pct else ".")
-        ),
+        "network_notice": "Synthetic IEEE-14 test network — not the real UK grid.",
         "forecast": forecast,
         "simulation": {"baseline": baseline, "options": cases[1:], "constraint_detected": constrained},
         "recommendation": recommendation,

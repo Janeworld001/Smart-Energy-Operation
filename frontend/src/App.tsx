@@ -274,10 +274,6 @@ function App() {
           </div>
 
           {error && <div role="alert" className="mt-5 flex items-center gap-2 rounded-xl border border-[#f2d0cb] bg-[#fff4f1] px-4 py-3 text-sm text-[#9a4338]"><X size={16} /> {error}</div>}
-          {!analysisIsOutOfDate && analysis?.data_quality.warnings.filter((warning) => !warning.startsWith("Illustrative example demand history")).length ? <div role="status" className="mt-5 rounded-xl border border-[#f0dfb6] bg-[#fff9e9] px-4 py-3 text-[11px] text-[#765b16]">
-            <p className="font-semibold">Data-quality checks need your review</p>
-            <ul className="mt-1 list-disc space-y-0.5 pl-5">{analysis.data_quality.warnings.filter((warning) => !warning.startsWith("Illustrative example demand history")).map((warning) => <li key={warning}>{warning}</li>)}</ul>
-          </div> : null}
           <div className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <MetricCard title="Current demand" value={snapshot.demand_mw} unit="MW" note="GB national demand input" icon={<Zap size={16} />} tone="green" delta={demandChange === null ? "No recent history" : `${demandChange >= 0 ? "+" : ""}${demandChange.toFixed(1)}% vs 30 min ago`} up={demandChange !== null && demandChange >= 0} />
             <MetricCard title="Renewable output" value={snapshot.wind_mw + snapshot.solar_mw} unit="MW" note="Wind + solar inputs" icon={<Wind size={16} />} tone="lime" delta={`${renewableShare.toFixed(1)}% of demand`} />
@@ -363,11 +359,11 @@ function App() {
                 </div>
                 <div className="mx-5 mt-4 flex items-start gap-3 rounded-xl border border-[#e7ece7] bg-[#f8faf8] p-3.5">
                   <Radio size={15} className="mt-0.5 shrink-0 text-forest" />
-                  <div><p className="text-[11px] font-medium">{analysis?.network ?? "IEEE 14-bus synthetic test network"}</p><p className="mt-1 text-[10px] leading-4 text-muted">{analysis?.network_notice ?? "Synthetic test network only — not the real UK grid."}</p></div>
+                  <p className="text-[11px] font-medium">{analysis?.network ?? "IEEE 14-bus synthetic test network"}</p>
                 </div>
                 <div className="mx-5 mt-4 rounded-xl border border-[#e5ebe5] bg-[#f9fbf9] p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div><p className="text-[11px] font-semibold">Import historical demand CSV</p><p className="mt-1 text-[10px] leading-4 text-muted">At least 337 consecutive half-hour rows. Required columns: timestamp, demand_mw. Optional: wind_mw, solar_mw, pumping_mw.</p></div>
+                    <div><p className="text-[11px] font-semibold">Import historical demand CSV</p><p className="mt-1 text-[10px] leading-4 text-muted">At least 337 actual half-hour readings. Accepts timestamp/demand_mw columns or NESO settlement_date, settlement_period, and ND columns.</p></div>
                     <a href="data:text/csv;charset=utf-8,timestamp%2Cdemand_mw%2Cwind_mw%2Csolar_mw%2Cpumping_mw%0A" download="gridtrust-template.csv" className="shrink-0 rounded-lg border border-[#dfe7df] bg-white px-3 py-2 text-[10px] font-medium text-forest">Download template</a>
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -390,7 +386,6 @@ function App() {
                 </div>
                 <div className="mx-5 mb-5 border-t border-[#eef1ee] pt-4">
                   <InputSlider label="Synthetic test-network stress" value={snapshot.synthetic_stress_pct} min={0} max={200} step={25} unit="% extra load" onChange={(v) => setValue("synthetic_stress_pct", v)} />
-                  <p className="mt-2 text-[10px] leading-4 text-[#765b16]">Demonstration only: adds load to the IEEE-14 test case to explore constraints. It does not change demand forecasts or represent UK grid conditions.</p>
                 </div>
               </Card>
 
@@ -510,16 +505,18 @@ function ForecastChart({ current, history, forecast, lower, upper }: { current: 
   const xStart = 46;
   const xEnd = 96;
   return <div className="relative">
-    <div className="absolute left-0 top-0 flex h-[190px] flex-col justify-between pb-3 text-[9px] text-[#99a39b]">{[max, Math.round((max + min) / 2), min].map((v) => <span key={v}>{v}</span>)}</div>
-    <svg viewBox="0 0 100 210" preserveAspectRatio="none" className="ml-8 h-[190px] w-[calc(100%-32px)] overflow-visible">
+    <div className="absolute left-0 top-0 flex h-[170px] flex-col justify-between pb-2 text-[9px] text-[#99a39b]">{[max, Math.round((max + min) / 2), min].map((v) => <span key={v}>{v}</span>)}</div>
+    <svg viewBox="0 0 100 210" preserveAspectRatio="none" className="ml-8 block h-[170px] w-[calc(100%-32px)]">
       {[16, 100, 184].map((line) => <line key={line} x1="0" x2="100" y1={line} y2={line} stroke="#edf0ed" strokeWidth=".6" strokeDasharray="1 1" />)}
       <path d={`M ${xStart} ${y(points.at(-1) ?? current)} L ${xEnd} ${y(upper ?? target * 1.04)} L ${xEnd} ${y(lower ?? target * 0.96)} Z`} fill="#eef4df" />
       <polyline points={hist} fill="none" stroke="#1c6248" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
       <line x1={xStart} x2={xEnd} y1={y(points.at(-1) ?? current)} y2={y(target)} stroke="#b1c95d" strokeWidth="1.5" strokeDasharray="3 2" vectorEffect="non-scaling-stroke" />
       {points.map((v, i) => <circle key={i} cx={historyX[i]} cy={y(v)} r="1.2" fill="#1c6248" />)}
       <circle cx={xEnd} cy={y(target)} r="2" fill="#9ab43d" stroke="white" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-      <text x="1" y="205" fontSize="3.1" fill="#89948c">−1h</text><text x="20" y="205" fontSize="3.1" fill="#89948c">−30m</text><text x="43" y="205" fontSize="3.1" fill="#89948c">Now</text><text x="91" y="205" fontSize="3.1" fill="#89948c">+2h</text>
     </svg>
+    <div className="ml-8 grid w-[calc(100%-32px)] grid-cols-[20%_23%_48%_9%] pt-1 text-[9px] text-[#89948c]">
+      <span className="text-left">−1h</span><span className="text-center">−30m</span><span className="text-center">Now</span><span className="text-right">+2h</span>
+    </div>
     <div className="absolute right-1 top-1 rounded-lg border border-[#e6ebe6] bg-white px-2.5 py-1.5 text-[10px] shadow-panel"><span className="text-muted">Forecast </span><b>{forecast ?? "—"} MW</b></div>
   </div>;
 }

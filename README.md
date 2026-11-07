@@ -82,12 +82,12 @@ The backend can stay on Render at `https://smart-energy-operation.onrender.com`;
 1. Import the GitHub repository.
 2. Set the **Root Directory** to `frontend`.
 3. Use the Vite framework preset, with build command `npm run build` and output directory `dist`.
-4. Add the environment variable `VITE_API_URL` with value `https://smart-energy-operation.onrender.com` for the Production environment (and Preview too if you want to test preview deployments).
+4. The frontend defaults to `https://smart-energy-operation.onrender.com` in production. Set `VITE_API_URL` only if your backend uses a different URL.
 5. Deploy the project and copy its production domain, such as `https://your-project.vercel.app`.
 
-Vite embeds `VITE_API_URL` into the frontend during the build, so set it in Vercel before deploying or redeploy after changing it. The local `frontend/.env.production` is ignored by Git and is not a substitute for setting the Vercel environment variable.
+Vite embeds `VITE_API_URL` into the frontend during the build, so redeploy after changing it.
 
-The backend permits browser requests from the local Vite origins by default. In the Render backend service settings, set `GRIDTRUST_ALLOWED_ORIGINS` to the exact Vercel production origin, for example `https://your-project.vercel.app` (origin only: no path or trailing slash), then restart or redeploy the backend. The backend accepts multiple comma-separated origins, so you can also add specific Vercel preview or custom-domain origins. Preview domains that change should be added as needed; wildcard origins are not enabled. Once both services are deployed, open the Vercel URL and confirm that analysis, CSV import, and history requests work.
+The backend allows the production origin `https://smart-energy-operation-b2o1.vercel.app` and the local Vite origins by default. For another production, preview, or custom domain, set `GRIDTRUST_ALLOWED_ORIGINS` in Render to its exact origin (no path or trailing slash), then restart or redeploy the backend. Multiple comma-separated origins are supported; wildcard origins are not enabled. Once both services are deployed, open the Vercel URL and confirm that analysis, CSV import, and history requests work.
 
 ## Forecast model and artifacts
 

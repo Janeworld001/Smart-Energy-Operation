@@ -34,6 +34,7 @@ app = FastAPI(title="GridTrust API", version="1.0.0")
 allowed_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "https://smart-energy-operation-b2o1.vercel.app",
 ]
 allowed_origins.extend(
     origin.strip().rstrip("/")
